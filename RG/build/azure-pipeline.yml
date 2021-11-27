@@ -1,0 +1,78 @@
+trigger:
+  branches:
+    include:
+    - master
+    - develop
+  paths:
+    include:
+    - RG/*
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+stages:
+  - stage: Build
+    jobs:
+    - job: Build_IAC
+      steps:
+      - checkout: self
+      - task: CopyFiles@2
+        displayName: 'Copy TF files'
+        inputs:
+          sourceFolder: depot-iac/RG/deploy/terraform
+          contents: '**' 
+          cleanTargetFolder: true
+          TargetFolder: '$(Build.ArtifactStagingDirectory)'
+      - task: PublishPipelineArtifact@1
+        inputs:
+          targetPath: '$(Build.ArtifactStagingDirectory)'
+          artifact: 'terraform'
+          publishLocation: 'pipeline'
+  - stage: Deploy
+    jobs: 
+    - deployment: Deploy_to_Dev
+      condition: and(succeeded(), eq(variables['force_deployment_dev'], 'true'))
+      environment: development
+      timeoutInMinutes: 20
+      variables:
+        deploymentEnv: 'dev'
+        subscription: 'Free Trial (ecc3f3e2-b49f-452f-824e-83936e6c95a3)' #should change it
+        terraformSa: 'testpipebg'     #change
+        terraformRg: 'terraform-ci-cd'   #change
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - task: ms-devlabs.custom-terraform-tasks.custom-terraform-installer-task.TerraformInstaller@0
+              displayName: 'Terraform Installer'
+              inputs:
+                terraformVersion: '0.12.25'
+            - task: DownloadPipelineArtifact@2
+              displayName: 'Download IaC Files'
+              inputs:
+                artifactName: 'terraform'
+                downloadPath: '$(System.DefaultWorkingDirectory)'
+            - task: TerraformTaskV2@2
+              inputs:
+                  provider: 'azurerm'
+                  command: 'init'
+                  workingDirectory: '$(System.DefaultWorkingDirectory)/$(deploymentEnv)'
+                  backendServiceArm: 'Free Trial (ecc3f3e2-b49f-452f-824e-83936e6c95a3)'
+                  backendAzureRmResourceGroupName: $(terraformRg)
+                  backendAzureRmStorageAccountName: $(terraformSa)
+                  backendAzureRmContainerName: 'tfstate'
+                  backendAzureRmKey: 'terraform.tfstate' 
+            - task: TerraformTaskV2@2
+              inputs:
+                  provider: 'azurerm'
+                  command: 'plan'   
+                  commandOptions: '-var "environment=$(deploymentEnv)"'
+                  backendServiceArm: 'Free Trial (ecc3f3e2-b49f-452f-824e-83936e6c95a3)'
+            - task: TerraformTaskV2@2
+              displayName: 'Terraform Apply'
+              name: TerraformOutput
+              inputs:
+                  provider: 'azurerm'
+                  command: 'apply'
+                  commandOptions: '-auto-approve -var "environment=$(deploymentEnv)"'   
+                  backendServiceArm: 'Free Trial (ecc3f3e2-b49f-452f-824e-83936e6c95a3)'
