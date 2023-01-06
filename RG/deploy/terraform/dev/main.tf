@@ -7,7 +7,7 @@ terraform {
  backend "azurerm" {
  }
 }
-======================
+
 module "rg"{
   source                          = ".//modules/rg"
   location                        = var.location
